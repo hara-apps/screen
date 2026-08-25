@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Проба демонстрации экрана</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --bg:#101014; --fg:#e8e8ec; --mut:#8b8b96; --ok:#3ddc84; --bad:#ff5a5f; --card:#1b1b21; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; padding:16px 14px 40px; background:var(--bg); color:var(--fg);
+         font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  h1 { font-size:17px; margin:0 0 2px; }
+  .sub { color:var(--mut); font-size:13px; margin:0 0 14px; }
+  .card { background:var(--card); border-radius:12px; padding:6px 12px; margin:10px 0; }
+  .row { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid #26262e; font-size:14px; }
+  .row:last-child { border-bottom:0; }
+  .row b { flex:0 0 46%; font-weight:600; }
+  .row span { flex:1; color:var(--mut); word-break:break-word; }
+  .yes { color:var(--ok); } .no { color:var(--bad); }
+  button { width:100%; padding:14px; font-size:15px; font-weight:600; border:0; border-radius:12px;
+           background:#3a7afe; color:#fff; margin-top:12px; }
+  button:disabled { background:#3a3a44; color:#8b8b96; }
+  #vid { width:100%; border-radius:12px; margin-top:12px; background:#000; display:none; }
+  .note { color:var(--mut); font-size:12px; margin-top:14px; line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>Проба демонстрации экрана</h1>
+<p class="sub" id="sub">Нажми кнопку и посмотри строки ниже.</p>
+
+<div class="card">
+  <div class="row"><b>Где открыто</b><span id="where">—</span></div>
+  <div class="row"><b>Платформа</b><span id="plat">—</span></div>
+  <div class="row"><b>Защищённый контекст</b><span id="sec">—</span></div>
+  <div class="row"><b>getDisplayMedia есть</b><span id="has">—</span></div>
+  <div class="row"><b>Поток получен</b><span id="got">—</span></div>
+  <div class="row"><b>Дорожек видео/аудио</b><span id="tracks">—</span></div>
+  <div class="row"><b>Что отдали</b><span id="what">—</span></div>
+  <div class="row"><b>Размер картинки</b><span id="size">—</span></div>
+  <div class="row"><b>Имя ошибки</b><span id="err">—</span></div>
+  <div class="row"><b>Версия пробы</b><span id="ver">—</span></div>
+</div>
+
+<button id="go">🖥 Показать экран</button>
+<video id="vid" muted playsinline></video>
+
+<p class="note">
+  Эта страница ничего не передаёт и ничего не сохраняет: поток остаётся в браузере и
+  гасится, как только ты уйдёшь. Она отвечает на один вопрос - отдаёт ли Telegram доступ к
+  экрану на ЭТОМ клиенте.
+</p>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var tg = (window.Telegram || {}).WebApp;
+  if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+  var VERSION = '2ea6279921de';
+  function set(id, txt, ok) {
+    var el = $(id);
+    el.textContent = txt;
+    el.className = (ok === true ? 'yes' : (ok === false ? 'no' : ''));
+  }
+
+  // ГДЕ ОТКРЫТО - ПО SDK И ПРИЗНАКУ ПЛАТФОРМЫ. Сам скрипт грузится и в обычном браузере,
+  // поэтому наличие window.Telegram ещё не значит «мы в аппке».
+  var inApp = !!(tg && tg.platform && tg.platform !== 'unknown');
+  var ua = navigator.userAgent;
+  set('where', inApp ? ('мини-аппка (' + tg.platform + ', v' + (tg.version || '?') + ')') : 'браузер');
+  set('plat', (inApp ? tg.platform + ' · ' : '')
+      + (/iPhone|iPad|iPod/i.test(ua) ? 'iOS' : (/Android/i.test(ua) ? 'Android' : 'desktop')));
+  set('ver', VERSION.indexOf('{{') === 0 ? 'не подставлена' : VERSION);
+
+  // БЕЗ HTTPS getDisplayMedia НЕ РАБОТАЕТ НИГДЕ, и это НЕ запрет Telegram. Спутав одно с
+  // другим, мы записали бы в законы неверную причину - ровно та ошибка, которой мы
+  // избежали на микрофоне.
+  var secure = !!window.isSecureContext;
+  set('sec', secure ? 'да' : 'НЕТ (getDisplayMedia не даст доступ ни в каком браузере)', secure);
+
+  // ОТСУТСТВИЕ САМОГО МЕТОДА - ЭТО ОТДЕЛЬНЫЙ ОТВЕТ, а не «отказали». На мобильных
+  // браузерах его обычно НЕТ ВОВСЕ: там нечего разрешать, и просить бесполезно.
+  var hasGDM = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  set('has', hasGDM ? 'да' : 'НЕТ - метода не существует на этом клиенте', hasGDM);
+  if (!hasGDM) { $('go').disabled = true; $('sub').textContent = 'Метода нет - показывать нечего.'; }
+
+  $('go').onclick = async function () {
+    set('err', '—');
+    var st = null;
+    try {
+      // audio: true просим НАРОЧНО - на десктопе часть клиентов отдаёт звук вкладки, и
+      // это меняет то, что мы вообще можем предложить (звук доклада без второго микрофона).
+      st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch (e) {
+      // ИМЯ ОШИБКИ ВАЖНЕЕ ТЕКСТА: NotAllowedError (отказали/не спросили),
+      // NotSupportedError (нельзя тут), NotFoundError (нечего отдавать) - три разных мира,
+      // и по общему «не получилось» их не различить.
+      set('got', 'нет', false);
+      set('err', (e && e.name ? e.name : 'Error') + ': ' + (e && e.message || e));
+      return;
+    }
+    var v = st.getVideoTracks(), a = st.getAudioTracks();
+    set('got', 'ДА', true);
+    set('tracks', v.length + ' видео / ' + a.length + ' аудио');
+    var s = v[0] && v[0].getSettings ? v[0].getSettings() : {};
+    // ЧТО ИМЕННО ОТДАЛИ - экран, окно или вкладку: от этого зависит, что человек увидит.
+    set('what', (s.displaySurface || (v[0] && v[0].label) || 'не сказано')
+        + (a.length ? ' + звук' : ' (без звука)'));
+    set('size', (s.width || '?') + '×' + (s.height || '?') + ' @ ' + (s.frameRate || '?') + ' fps');
+    var el = $('vid');
+    el.srcObject = st; el.style.display = 'block';
+    try { await el.play(); } catch (e) {}
+    // ОСТАНОВКУ ЛОВИМ: человек вправе прекратить показ кнопкой браузера, и это НЕ ошибка.
+    v.forEach(function (t) {
+      t.onended = function () { set('got', 'ДА, но показ остановлен', true); };
+    });
+    $('sub').textContent = 'Поток идёт. Останови показ, когда посмотришь строки.';
+  };
+})();
+</script>
+</body>
+</html>
